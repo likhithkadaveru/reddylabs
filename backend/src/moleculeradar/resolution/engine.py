@@ -81,6 +81,81 @@ class ResolutionOutcome:
     features: dict[str, object] = field(default_factory=dict)
 
 
+def claim_alias(
+    session: Session,
+    entity_type: EntityType,
+    entity_id: uuid.UUID,
+    literal: str,
+    normalized: str,
+    method: ResolutionMethod,
+    confidence: float,
+    source_document_id: uuid.UUID | None,
+    *,
+    alias_kind: AliasKind = AliasKind.SOURCE_LITERAL,
+) -> bool:
+    """Record `literal` as an alias of `entity_id`, if the alias is unclaimed.
+
+    One normalised alias may belong to at most one entity of a type (enforced by
+    a unique constraint). When another entity already holds it we must not
+    overwrite, and must not crash: that would mean a source literal genuinely
+    points at two different canonical entities, which is precisely the ambiguity
+    a human should adjudicate.
+
+    Returns True if the alias was recorded, False if it was already claimed by a
+    different entity (in which case a review item is created).
+    """
+    if not normalized:
+        return False
+
+    existing_owner = session.scalar(
+        select(EntityAlias.entity_id).where(
+            EntityAlias.entity_type == entity_type,
+            EntityAlias.normalized_alias == normalized,
+        )
+    )
+    if existing_owner == entity_id:
+        return True
+    if existing_owner is not None:
+        session.add(
+            ReviewQueueItem(
+                item_kind="conflicting_alias",
+                entity_type=entity_type,
+                input_literal=literal,
+                candidate_payload={
+                    "normalized_alias": normalized,
+                    "existing_owner_entity_id": str(existing_owner),
+                    "requested_owner_entity_id": str(entity_id),
+                    "resolution_method": method.value,
+                },
+                proposed_action=(
+                    f"The literal {literal!r} normalises to an alias already held by a "
+                    f"different {entity_type.value}. Decide whether these are the same "
+                    f"entity (and merge) or whether the alias is genuinely ambiguous "
+                    f"(and must be disambiguated by context). No automatic change made."
+                ),
+                confidence=confidence,
+                status=ReviewStatus.PENDING,
+                source_document_id=source_document_id,
+            )
+        )
+        return False
+
+    session.add(
+        EntityAlias(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            alias=literal,
+            normalized_alias=normalized,
+            alias_kind=alias_kind,
+            resolution_method=method,
+            confidence=confidence,
+            first_seen_source_document_id=source_document_id,
+        )
+    )
+    session.flush()
+    return True
+
+
 class CompanyResolver:
     """Resolves company name literals to canonical companies."""
 
@@ -300,24 +375,9 @@ class CompanyResolver:
             if entity_type is EntityType.COMPANY
             else normalize_molecule_name(literal)
         )
-        if not normalized:
-            return
-        exists = self.session.scalar(
-            select(EntityAlias.id).where(
-                EntityAlias.entity_type == entity_type,
-                EntityAlias.entity_id == entity_id,
-                EntityAlias.normalized_alias == normalized,
-            )
-        )
-        if exists:
-            return
-        self.session.add(
-            EntityAlias(
-                entity_type=entity_type, entity_id=entity_id, alias=literal,
-                normalized_alias=normalized, alias_kind=AliasKind.SOURCE_LITERAL,
-                resolution_method=method, confidence=confidence,
-                first_seen_source_document_id=source_document_id,
-            )
+        claim_alias(
+            self.session, entity_type, entity_id, literal, normalized,
+            method, confidence, source_document_id,
         )
 
     def _log_merge(
@@ -552,25 +612,9 @@ class MoleculeResolver:
         self, entity_id: uuid.UUID, literal: str, method: ResolutionMethod,
         confidence: float, source_document_id: uuid.UUID | None,
     ) -> None:
-        normalized = normalize_molecule_name(literal)
-        if not normalized:
-            return
-        exists = self.session.scalar(
-            select(EntityAlias.id).where(
-                EntityAlias.entity_type == EntityType.MOLECULE,
-                EntityAlias.entity_id == entity_id,
-                EntityAlias.normalized_alias == normalized,
-            )
-        )
-        if exists:
-            return
-        self.session.add(
-            EntityAlias(
-                entity_type=EntityType.MOLECULE, entity_id=entity_id, alias=literal,
-                normalized_alias=normalized, alias_kind=AliasKind.SOURCE_LITERAL,
-                resolution_method=method, confidence=confidence,
-                first_seen_source_document_id=source_document_id,
-            )
+        claim_alias(
+            self.session, EntityType.MOLECULE, entity_id, literal,
+            normalize_molecule_name(literal), method, confidence, source_document_id,
         )
 
 

@@ -83,6 +83,9 @@ _COMPANY_NOISE: tuple[str, ...] = (
     "sciences",
     "science",
     "therapeutics",
+    "therapeutic",
+    "holding",
+    "industries",
     "usa",
     "us",
     "india",
@@ -368,7 +371,17 @@ def molecule_blocking_key(name: str) -> str:
 
 
 def company_blocking_key(name: str) -> str:
-    """Coarse key for company candidate generation."""
+    """Coarse key for company candidate generation.
+
+    Uses the first *token* of the normalised name rather than the first N
+    characters of the whole string. That difference matters: normalisation strips
+    a variable number of noise words, so "Zeta Therapeutics Holdings Ltd"
+    normalises to "zeta" while "Zeta Therapeutic Holding Limited" (singular
+    forms, not in the noise list) normalises to "zeta therapeutic holding". A
+    whole-string prefix key puts those in different blocks and the near-duplicate
+    is never even compared, silently creating a second company for the same firm.
+    Keying on the first token puts both in block "zeta".
+    """
     normalized = normalize_company_name(name)
-    collapsed = normalized.replace(" ", "")
-    return collapsed[:5]
+    first_token = normalized.split(" ")[0] if normalized else ""
+    return first_token[:5]

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
-from typing import Any
+from typing import Any, ClassVar
 
 from sqlalchemy import (
     ARRAY,
@@ -33,7 +33,8 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from .enums import (
@@ -62,7 +63,12 @@ from .enums import (
 
 
 class Base(DeclarativeBase):
-    type_annotation_map = {dict[str, Any]: JSONB, list[str]: ARRAY(Text)}
+    # SQLAlchemy reads this mapping at class-construction time and never mutates
+    # it; the ClassVar annotation tells linters the same.
+    type_annotation_map: ClassVar[dict[Any, Any]] = {
+        dict[str, Any]: JSONB,
+        list[str]: ARRAY(Text),
+    }
 
 
 def _uuid_pk() -> Mapped[uuid.UUID]:
@@ -238,8 +244,13 @@ class EntityAlias(Base, TimestampMixin):
 
     __tablename__ = "entity_alias"
     __table_args__ = (
+        # One normalised alias resolves to at most ONE entity of a given type.
+        # Without this, two companies could both claim the alias "drl" and
+        # resolution would non-deterministically pick whichever row the planner
+        # returned first. A genuinely ambiguous alias must go to human review
+        # rather than be stored twice.
         UniqueConstraint(
-            "entity_type", "entity_id", "normalized_alias", name="uq_entity_alias_norm"
+            "entity_type", "normalized_alias", name="uq_entity_alias_type_norm"
         ),
         Index("ix_entity_alias_lookup", "entity_type", "normalized_alias"),
     )
@@ -290,7 +301,9 @@ class ReviewQueueItem(Base, TimestampMixin):
     candidate_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     proposed_action: Mapped[str] = mapped_column(Text, nullable=False)
     confidence: Mapped[float | None] = mapped_column(Float)
-    status: Mapped[ReviewStatus] = mapped_column(String(16), nullable=False, default=ReviewStatus.PENDING)
+    status: Mapped[ReviewStatus] = mapped_column(
+        String(16), nullable=False, default=ReviewStatus.PENDING
+    )
     decided_by: Mapped[str | None] = mapped_column(String(128))
     decided_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     decision_note: Mapped[str | None] = mapped_column(Text)

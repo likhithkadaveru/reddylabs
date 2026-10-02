@@ -69,3 +69,17 @@ plugins = []
 warn_unused_ignores = true
 disallow_untyped_defs = false
 ignore_missing_imports = true
+
+[tool.ruff.lint.per-file-ignores]
+# Signal evaluators share one uniform signature so they can be held in a registry
+# and invoked generically; not every signal needs the shared context argument.
+"src/moleculeradar/signals/definitions.py" = ["ARG001"]
+# Pharmaceutical source data genuinely contains typographic apostrophes and
+# dashes ("Dr. Reddy's" with U+2019). Testing that we normalise them requires
+# writing them literally.
+"tests/unit/test_normalize.py" = ["RUF001"]
+"src/moleculeradar/core/config.py" = ["RUF001", "RUF002"]
+# This module exists to fold typographic characters to ASCII, so it must
+# contain them literally.
+"src/moleculeradar/resolution/normalize.py" = ["RUF001", "RUF002"]
+"tests/integration/test_entity_resolution.py" = ["RUF001"]
