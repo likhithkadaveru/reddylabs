@@ -83,3 +83,6 @@ ignore_missing_imports = true
 # contain them literally.
 "src/moleculeradar/resolution/normalize.py" = ["RUF001", "RUF002"]
 "tests/integration/test_entity_resolution.py" = ["RUF001"]
+# Tilde-delimited Orange Book fixture rows are verbatim source-format lines.
+# Wrapping them would change the data under test.
+"tests/integration/test_orange_book_connector.py" = ["E501"]
