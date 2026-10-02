@@ -20,7 +20,7 @@ dependencies = [
     "xlrd>=2.0.1",
     "structlog>=24.4",
     "slowapi>=0.1.9",
-    "passlib[bcrypt]>=1.7.4",
+    "argon2-cffi>=23.1",
     "pyjwt>=2.10",
 ]
 
@@ -92,3 +92,10 @@ ignore_missing_imports = true
 # Tilde-delimited Orange Book rows in the end-to-end fixture are verbatim
 # source-format lines; wrapping them would change the data under test.
 "tests/integration/test_end_to_end_pipeline.py" = ["ARG002", "E501"]
+# FastAPI route handlers must DECLARE the authorization dependency for it to be
+# enforced, even when the handler body does not reference the principal. Removing
+# the parameter would silently remove the access check.
+"src/moleculeradar/api/routers/*.py" = ["ARG001"]
+# FastAPI exception handlers are called with (request, exc) by the framework; the
+# signature is fixed even when a handler uses neither.
+"src/moleculeradar/api/app.py" = ["ARG001"]
