@@ -19,6 +19,7 @@ data it has never been able to fetch.
 from __future__ import annotations
 
 import datetime as dt
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -201,9 +202,22 @@ class IngestionHttpClient:
             self.limiter.wait()
             response = self._client.get(url, headers={"Accept": "*/*"})
         except httpx.HTTPError as exc:
+            # A policy denial from an egress proxy surfaces as a transport error
+            # (ProxyError on a failed CONNECT), not as a response with a status, so
+            # the status must be recovered from the message. Reporting this as a
+            # generic "unreachable" would send an operator looking for a network
+            # fault instead of at their allow-list.
+            status = _status_from_proxy_error(str(exc))
+            detail = f"{type(exc).__name__}: {exc}"
+            if status in (403, 407):
+                detail = (
+                    f"{type(exc).__name__}: proxy answered {status} to CONNECT. This is "
+                    f"an egress policy denial rather than a refusal by the publisher — "
+                    f"check whether {host} is in the environment's allowed domains."
+                )
             return ReachabilityResult(
-                host=host, url=url, reachable=False, status_code=None,
-                detail=f"{type(exc).__name__}: {exc}",
+                host=host, url=url, reachable=False, status_code=status,
+                detail=detail,
                 elapsed_ms=(time.monotonic() - started) * 1000,
             )
         elapsed = (time.monotonic() - started) * 1000
@@ -219,6 +233,19 @@ class IngestionHttpClient:
             host=host, url=url, reachable=ok, status_code=response.status_code,
             detail=detail, elapsed_ms=elapsed,
         )
+
+
+_PROXY_STATUS = re.compile(r"\b(403|407|502|503)\b")
+
+
+def _status_from_proxy_error(message: str) -> int | None:
+    """Recover an HTTP status from a proxy transport error message.
+
+    httpx raises ProxyError without a response object when a CONNECT is refused,
+    so the status only exists in the message text.
+    """
+    match = _PROXY_STATUS.search(message)
+    return int(match.group(1)) if match else None
 
 
 def _parse_retry_after(value: str | None) -> float | None:

@@ -86,3 +86,9 @@ ignore_missing_imports = true
 # Tilde-delimited Orange Book fixture rows are verbatim source-format lines.
 # Wrapping them would change the data under test.
 "tests/integration/test_orange_book_connector.py" = ["E501"]
+# A pytest fixture requested purely for its side effects (here, running the
+# ingestion pipeline) is necessarily an unused argument.
+"tests/integration/*.py" = ["ARG002"]
+# Tilde-delimited Orange Book rows in the end-to-end fixture are verbatim
+# source-format lines; wrapping them would change the data under test.
+"tests/integration/test_end_to_end_pipeline.py" = ["ARG002", "E501"]
