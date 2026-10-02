@@ -119,6 +119,15 @@ def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
 
+def _sentence_case(text: str) -> str:
+    """Upper-case the first character only.
+
+    str.capitalize() lower-cases the remainder, which destroys acronyms: it turns
+    "one competing API supplier" into "One competing api supplier".
+    """
+    return text[:1].upper() + text[1:] if text else text
+
+
 # ---------------------------------------------------------------------------
 # BUILD signals
 # ---------------------------------------------------------------------------
@@ -200,7 +209,7 @@ def _limited_observed_api_supply(fs: FeatureSet, ctx: dict[str, Any]) -> SignalR
         points=round(points, 1),
         max_points=max_pts,
         explanation=(
-            f"{qualifier.capitalize()} identified in Molecule Radar's current "
+            f"{_sentence_case(qualifier)} identified in Molecule Radar's current "
             f"public-source coverage (active Type II DMF holders). This reflects US "
             f"drug master file filings only and is not a complete global supplier census."
         ),
