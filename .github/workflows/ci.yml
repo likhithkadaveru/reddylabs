@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: moleculeradar_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      MR_TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/moleculeradar_test
+      MR_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/moleculeradar_test
+      MR_HTTP_CONTACT_EMAIL: ci@example.invalid
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - name: Install
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Lint
+        working-directory: backend
+        run: ruff check src tests
+      - name: Type check
+        working-directory: backend
+        run: mypy src/moleculeradar || true   # advisory while typing is incomplete
+      - name: Tests
+        working-directory: backend
+        run: pytest -q
+      - name: Migrations apply cleanly from scratch
+        working-directory: backend
+        run: alembic upgrade head
+      - name: Dependency audit
+        working-directory: backend
+        run: pip-audit --strict || true       # advisory: upstream advisories move fast
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: "22"}
+      - name: Install
+        working-directory: frontend
+        run: npm install
+      - name: Type check
+        working-directory: frontend
+        run: npm run typecheck
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+      - name: Dependency audit
+        working-directory: frontend
+        run: npm audit --omit=dev || true

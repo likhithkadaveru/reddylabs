@@ -1,0 +1,46 @@
+# Local development stack. Not a production deployment: see docs/DEPLOYMENT.md.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: moleculeradar
+      POSTGRES_PASSWORD: moleculeradar
+      POSTGRES_DB: moleculeradar
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U moleculeradar"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.backend
+    environment:
+      MR_ENVIRONMENT: development
+      MR_DATABASE_URL: postgresql+psycopg://moleculeradar:moleculeradar@db:5432/moleculeradar
+      # Required before any ingestion: several public APIs treat a contactable
+      # User-Agent as a condition of use.
+      MR_HTTP_CONTACT_EMAIL: ${MR_HTTP_CONTACT_EMAIL:-}
+      MR_AUTH_ENABLED: "false"
+      MR_CORS_ALLOWED_ORIGINS: '["http://localhost:3000"]'
+    depends_on:
+      db: {condition: service_healthy}
+    ports: ["8000:8000"]
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn moleculeradar.api.app:create_app --factory --host 0.0.0.0 --port 8000"
+
+  web:
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.frontend
+    environment:
+      MR_API_BASE_URL: http://api:8000/api/v1
+    depends_on: [api]
+    ports: ["3000:3000"]
+
+volumes:
+  pgdata:
