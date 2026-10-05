@@ -665,3 +665,57 @@ class TestThinEvidenceBanding:
         assert summary.build_opportunities == 0
         assert summary.sell_opportunities == 0
         assert session.scalar(select(Opportunity)) is None
+
+
+class TestEvidenceRecency:
+    """Recency must measure how old the newest PUBLIC fact is.
+
+    Measuring from our own retrieval timestamp made the value negative in any
+    historical run — ingestion necessarily runs after the as-of date — and leaked
+    our operational schedule into a historical assessment.
+    """
+
+    def test_recency_measured_from_publication_not_retrieval(self, session) -> None:
+        from moleculeradar.signals.features import FeatureComputer
+
+        src = b.make_source(session, "recency_src")
+        # Published well before the as-of date, but downloaded long after it.
+        doc = b.make_document(
+            session, src,
+            retrieved_at=dt.datetime(2026, 10, 5, tzinfo=UTC),
+            published_at=dt.datetime(2025, 7, 1, tzinfo=UTC),
+        )
+        mol = b.make_molecule(session, "Recencyazole")
+        holder = b.make_company(session, "Recency Supplier Ltd")
+        b.make_dmf(session, doc, molecule=mol, holder=holder, dmf_number="DMF-REC-1",
+                   published_at=dt.datetime(2025, 7, 1, tzinfo=UTC))
+        session.flush()
+
+        fs = FeatureComputer(session, _ctx(dt.date(2026, 1, 1))).compute(mol.id, set())
+        recency = fs.values["evidence_recency_days"]
+
+        assert recency is not None
+        assert recency >= 0, "recency can never be negative"
+        # 2025-07-01 to 2026-01-01 is 184 days.
+        assert recency == 184, (
+            "recency must be measured from publication, not from our download time"
+        )
+
+    def test_recency_is_never_negative(self, session) -> None:
+        """Even same-day publication yields zero, not a negative number."""
+        from moleculeradar.signals.features import FeatureComputer
+
+        src = b.make_source(session, "recency_src2")
+        doc = b.make_document(
+            session, src,
+            retrieved_at=dt.datetime(2026, 10, 5, tzinfo=UTC),
+            published_at=dt.datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mol = b.make_molecule(session, "Sameday Azole")
+        holder = b.make_company(session, "Sameday Supplier Ltd")
+        b.make_dmf(session, doc, molecule=mol, holder=holder, dmf_number="DMF-REC-2",
+                   published_at=dt.datetime(2026, 1, 1, tzinfo=UTC))
+        session.flush()
+
+        fs = FeatureComputer(session, _ctx(dt.date(2026, 1, 1))).compute(mol.id, set())
+        assert fs.values["evidence_recency_days"] == 0

@@ -540,11 +540,19 @@ class FeatureComputer:
         # .union() method to chain.
         evidence_ids = union(*parts).subquery()
 
+        # Recency is measured from when the newest supporting fact became PUBLIC,
+        # not from when we downloaded it. Our retrieval timestamp is an artifact of
+        # when ingestion happened to run: in a historical run it is necessarily
+        # later than the as-of date, which produced a negative "age" and leaked our
+        # operational schedule into a historical assessment.
+        knowable_date = func.coalesce(
+            func.date(Evidence.published_at), Evidence.event_date
+        )
         row = self.session.execute(
             select(
                 func.count(func.distinct(SourceDocument.source_id)),
                 func.count(func.distinct(SourceDocument.id)),
-                func.max(SourceDocument.retrieved_at),
+                func.max(knowable_date),
             )
             .select_from(Evidence)
             .join(SourceDocument, SourceDocument.id == Evidence.source_document_id)
@@ -562,6 +570,9 @@ class FeatureComputer:
         latest = row[2]
         if latest is not None:
             latest_date = latest.date() if isinstance(latest, dt.datetime) else latest
-            fs.values["evidence_recency_days"] = (self.as_of - latest_date).days
+            # Clamped at zero: a fact published on the as-of date is zero days old,
+            # never negative. The temporal gate should already exclude anything
+            # later, so a negative here would indicate a gating failure.
+            fs.values["evidence_recency_days"] = max((self.as_of - latest_date).days, 0)
         else:
             fs.values["evidence_recency_days"] = None
