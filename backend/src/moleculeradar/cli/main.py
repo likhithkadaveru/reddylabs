@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import datetime as dt
 import sys
+from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -166,6 +167,131 @@ def sources_verify(
         raise typer.Exit(1)
 
     console.print("\n[green]All probed source hosts are reachable.[/green]")
+
+
+@sources_app.command("contract-test")
+def sources_contract_test(
+    source: str | None = typer.Option(None, help="Test one source only."),
+    url: str | None = typer.Option(
+        None, help="Override the probe URL (required for fda_dmf_list)."
+    ),
+    report_path: str | None = typer.Option(
+        None, "--report", help="Write a Markdown report to this path."
+    ),
+    promote: bool = typer.Option(
+        False,
+        help="Promote passing sources to LIVE_VERIFIED. Only a passing contract may.",
+    ),
+) -> None:
+    """Verify that live sources match what our connectors assume.
+
+    `sources verify` only answers "can we reach it". This answers the question
+    that actually matters: does the live response match our field mappings, date
+    formats, identifiers, pagination and nullability assumptions?
+
+    Exits non-zero if any contract fails or could not be fully evaluated.
+    """
+    from ..sources.contracts import CONTRACTS, ContractReport, ContractTester, render_markdown
+
+    keys = [source] if source else list(CONTRACTS)
+    try:
+        client = IngestionHttpClient(allow_without_contact=True)
+    except IngestionNotPermittedError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from exc
+
+    tester = ContractTester(client)
+    reports: list[ContractReport] = []
+    try:
+        for key in keys:
+            if key not in CONTRACTS:
+                console.print(f"[red]Unknown source {key!r}.[/red]")
+                raise typer.Exit(2)
+            console.print(f"[bold]Contract test: {key}[/bold]")
+            reports.append(tester.run(CONTRACTS[key], url_override=url))
+    finally:
+        client.close()
+
+    table = Table(title="Source contract tests")
+    table.add_column("Source", style="bold")
+    table.add_column("Reachable")
+    table.add_column("Verdict")
+    table.add_column("Checks")
+
+    for r in reports:
+        if r.passed:
+            verdict, colour = "PASS", "green"
+        elif r.failures:
+            verdict, colour = "FAIL", "red"
+        else:
+            verdict, colour = "INCOMPLETE", "yellow"
+        table.add_row(
+            r.source_key,
+            "[green]yes[/green]" if r.reachable else "[red]no[/red]",
+            f"[{colour}]{verdict}[/{colour}]",
+            r.summary() or "—",
+        )
+    console.print(table)
+
+    for r in reports:
+        problems = r.failures + r.unknowns
+        if not problems:
+            continue
+        console.print(f"\n[bold]{r.source_key}[/bold]")
+        for c in problems:
+            colour = "red" if c.status == "FAIL" else "yellow"
+            console.print(f"  [{colour}]{c.status}[/{colour}] {c.check} — {c.detail}")
+        if r.unknown_fields:
+            console.print(
+                f"  [dim]undeclared fields observed: "
+                f"{', '.join(r.unknown_fields[:8])}[/dim]"
+            )
+
+    if report_path:
+        Path(report_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(report_path).write_text(render_markdown(reports))
+        console.print(f"\nReport written to [bold]{report_path}[/bold]")
+
+    if promote:
+        promoted = _promote_verified([r for r in reports if r.passed])
+        console.print(f"Promoted {promoted} source(s) to LIVE_VERIFIED.")
+    elif any(r.passed for r in reports):
+        console.print(
+            "\n[dim]Passing contracts were NOT promoted to LIVE_VERIFIED. "
+            "Re-run with --promote to record that verification.[/dim]"
+        )
+
+    if any(not r.passed for r in reports):
+        console.print(
+            "\n[yellow]One or more contracts did not fully pass. A source whose "
+            "contract is unverified must not be treated as validated: its field "
+            "mappings have not been checked against live data.[/yellow]"
+        )
+        raise typer.Exit(1)
+
+
+def _promote_verified(passing: list) -> int:
+    """Record LIVE_VERIFIED for sources whose contract passed.
+
+    Only a passing contract may promote a source. Reachability alone must not, or
+    the register starts claiming validation we have not performed.
+    """
+    from ..core.enums import VerificationLevel
+    from ..sources.registry import build_connector
+
+    count = 0
+    with session_scope() as session:
+        for report in passing:
+            connector = build_connector(
+                report.source_key, session,
+                **({"artefact_url": report.probe_url}
+                   if report.source_key == "fda_dmf_list" else {}),
+            )
+            source = connector.ensure_source()
+            source.verification_level = VerificationLevel.LIVE_VERIFIED
+            source.last_live_verified_at = dt.datetime.now(dt.UTC)
+            count += 1
+    return count
 
 
 @sources_app.command("ingest")

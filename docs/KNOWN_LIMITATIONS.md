@@ -4,7 +4,15 @@ This document exists because Molecule Radar's entire value proposition is that i
 does not overstate what it knows. Anything that would embarrass us in front of a
 pharmaceutical customer belongs here, written plainly, before they find it.
 
-Last updated: 2026-10-02.
+Last updated: 2026-10-05.
+
+> **2026-10-05 update.** A second environment was tested for live network access.
+> Every data host is still denied, and the block is a strict allowlist that
+> includes `example.com` — not a pharma-specific denial. The full attempt,
+> including why no substitute data source was used, is recorded in
+> `docs/validation/LIVE_VALIDATION_ATTEMPT_001.md`. Verdict: NOT PROVEN, because
+> the methodology was never exposed to real data rather than having failed
+> against it.
 
 ---
 
@@ -34,7 +42,18 @@ Consequences, stated precisely:
   content, and `moleculeradar sources verify` reports the blocked hosts honestly.
 
 **What unblocks it:** allow outbound HTTPS to `www.fda.gov`, `api.fda.gov` and
-`clinicaltrials.gov`, then run `moleculeradar sources verify`.
+`clinicaltrials.gov`, then run:
+
+```bash
+moleculeradar sources contract-test --report docs/validation/CONTRACT_TEST_REPORT.md
+```
+
+That is stronger than `sources verify`, which only answers "can we reach it".
+The contract test checks envelope shape, record fields, date formats,
+identifiers, nullability, pagination and the publisher's currency timestamp
+against the live response, and reports every divergence from what our connectors
+assume. It is proven against a local mock server with planted faults, so a
+passing result means something.
 
 ---
 
